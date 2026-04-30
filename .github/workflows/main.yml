@@ -1,0 +1,141 @@
+name: Build Tom The AI Plus
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Tools
+        run: brew install xcodegen imagemagick
+
+      - name: Generate Project Files
+        run: |
+          # 1. Create directory structure
+          mkdir -p WebWrapper/Sources
+          mkdir -p WebWrapper/Assets.xcassets/AppIcon.appiconset
+          
+          # 2. Create the Swift Code (Webview)
+          cat <<EOF > WebWrapper/Sources/ContentView.swift
+          import SwiftUI
+          import WebKit
+
+          struct WebView: UIViewRepresentable {
+              let url: URL
+              func makeUIView(context: Context) -> WKWebView { WKWebView() }
+              func updateUIView(_ uiView: WKWebView, context: Context) {
+                  uiView.load(URLRequest(url: url))
+              }
+          }
+
+          @main
+          struct MyWebWrapperApp: App {
+              var body: some Scene {
+                  WindowGroup {
+                      WebView(url: URL(string: "https://math123934.codeberg.page/random/nick.html")!)
+                          .edgesIgnoringSafeArea(.all)
+                  }
+              }
+          }
+          EOF
+
+          # 3. GENERATE ALL REQUIRED ICON SIZES
+          # This pulls your icon from the path shown in your screenshot
+          SRC_ICON="TomTheAI/Assets.xcassets/AppIcon.appiconset/icon.png"
+          DEST="WebWrapper/Assets.xcassets/AppIcon.appiconset"
+
+          if [ -f "$SRC_ICON" ]; then
+            echo "Icon found. Generating resolutions..."
+            magick "$SRC_ICON" -resize 40x40! "$DEST/icon-40.png"
+            magick "$SRC_ICON" -resize 60x60! "$DEST/icon-60.png"
+            magick "$SRC_ICON" -resize 58x58! "$DEST/icon-58.png"
+            magick "$SRC_ICON" -resize 87x87! "$DEST/icon-87.png"
+            magick "$SRC_ICON" -resize 80x80! "$DEST/icon-80.png"
+            magick "$SRC_ICON" -resize 120x120! "$DEST/icon-120.png"
+            magick "$SRC_ICON" -resize 180x180! "$DEST/icon-180.png"
+            magick "$SRC_ICON" -resize 1024x1024! "$DEST/icon-1024.png"
+          else
+            echo "ERROR: icon.png not found at $SRC_ICON"
+            exit 1
+          fi
+          
+          # 4. Create the Contents.json mapping
+          cat <<EOF > "$DEST/Contents.json"
+          {
+            "images": [
+              { "size": "20x20", "idiom": "iphone", "filename": "icon-40.png", "scale": "2x" },
+              { "size": "20x20", "idiom": "iphone", "filename": "icon-60.png", "scale": "3x" },
+              { "size": "29x29", "idiom": "iphone", "filename": "icon-58.png", "scale": "2x" },
+              { "size": "29x29", "idiom": "iphone", "filename": "icon-87.png", "scale": "3x" },
+              { "size": "40x40", "idiom": "iphone", "filename": "icon-80.png", "scale": "2x" },
+              { "size": "40x40", "idiom": "iphone", "filename": "icon-120.png", "scale": "3x" },
+              { "size": "60x60", "idiom": "iphone", "filename": "icon-120.png", "scale": "2x" },
+              { "size": "60x60", "idiom": "iphone", "filename": "icon-180.png", "scale": "3x" },
+              { "size": "1024x1024", "idiom": "ios-marketing", "filename": "icon-1024.png", "scale": "1x" }
+            ],
+            "info": { "version": 1, "author": "xcode" }
+          }
+          EOF
+
+          # 5. Create Info.plist
+          cat <<EOF > WebWrapper/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleDisplayName</key><string>Tom The AI Plus</string>
+              <key>CFBundleExecutable</key><string>\$(EXECUTABLE_NAME)</string>
+              <key>CFBundleIdentifier</key><string>com.ai.tomtheaiplus</string>
+              <key>CFBundleName</key><string>TomTheAIPLUS</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleShortVersionString</key><string>1.0</string>
+              <key>CFBundleVersion</key><string>1</string>
+              <key>LSRequiresIPhoneOS</key><true/>
+              <key>UILaunchStoryboardName</key><string>LaunchScreen</string>
+          </dict>
+          </plist>
+          EOF
+
+          # 6. Create XcodeGen project configuration
+          cat <<EOF > project.yml
+          name: WebWrapper
+          targets:
+            WebWrapper:
+              type: application
+              platform: iOS
+              deploymentTarget: "15.0"
+              sources: [WebWrapper]
+              settings:
+                INFOPLIST_FILE: WebWrapper/Info.plist
+                ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+                PRODUCT_BUNDLE_IDENTIFIER: com.ai.tomtheaiplus
+          EOF
+
+          xcodegen generate
+
+      - name: Build Unsigned App
+        run: |
+          xcodebuild build \
+            -project WebWrapper.xcodeproj \
+            -scheme WebWrapper \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      - name: Package to IPA
+        run: |
+          mkdir Payload
+          cp -r build/Build/Products/Release-iphoneos/*.app Payload/
+          zip -r TomTheAI-Plus.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tom-The-AI-Plus-Final
+          path: TomTheAI-Plus.ipa
